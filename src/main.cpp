@@ -55,12 +55,27 @@ void setup_app(void)
 	// Read LoRaWAN settings from flash
 	api_read_credentials();
 
-	if (g_lorawan_settings.lorawan_enable != false)
+	// if (g_lorawan_settings.lorawan_enable != false)
 	{
 		// Change LoRaWAN settings
 		g_lorawan_settings.lorawan_enable = false;	 // Force LoRa P2P
-		g_lorawan_settings.send_repeat_time = 30000; // Force 30 seconds send interval
+		g_lorawan_settings.send_repeat_time = 10000; // Force 30 seconds send interval
 		g_lorawan_settings.auto_join = false;		 // Disable automatic join ==> enable BLE advertising
+#ifdef HIGH_FREQ
+#warning "H version"
+		g_lorawan_settings.p2p_frequency = 916000000;
+#else
+#warning "L version"
+		g_lorawan_settings.p2p_frequency = 433100000;
+#endif
+		g_lorawan_settings.p2p_tx_power = 22;
+		g_lorawan_settings.p2p_bandwidth = 0;
+		g_lorawan_settings.p2p_sf = 7;
+		g_lorawan_settings.p2p_cr = 1;
+		g_lorawan_settings.p2p_preamble_len = 8;
+		g_lorawan_settings.p2p_symbol_timeout = 0;
+		g_lora_p2p_rx_mode = RX_MODE_RX;
+
 		// Save LoRaWAN settings
 		api_set_credentials();
 	}
@@ -189,6 +204,27 @@ bool init_app(void)
 
 	// Erase flash file system
 	flash_reset();
+
+	// Change LoRaWAN settings
+	g_lorawan_settings.lorawan_enable = false;	 // Force LoRa P2P
+	g_lorawan_settings.send_repeat_time = 10000; // Force 30 seconds send interval
+	g_lorawan_settings.auto_join = false;		 // Disable automatic join ==> enable BLE advertising
+#ifdef HIGH_FREQ
+#warning "H version"
+	g_lorawan_settings.p2p_frequency = 916000000;
+#else
+#warning "L version"
+	g_lorawan_settings.p2p_frequency = 433100000;
+#endif
+	g_lorawan_settings.p2p_tx_power = 22;
+	g_lorawan_settings.p2p_bandwidth = 0;
+	g_lorawan_settings.p2p_sf = 7;
+	g_lorawan_settings.p2p_cr = 1;
+	g_lorawan_settings.p2p_preamble_len = 8;
+	g_lorawan_settings.p2p_symbol_timeout = 0;
+
+	g_lora_p2p_rx_mode = RX_MODE_RX;
+
 	// Save LoRaWAN settings (in case they were still there on top of Meshtastic settings)
 	api_set_credentials();
 
@@ -477,6 +513,14 @@ void lora_data_handler(void)
 			log_idx += 3;
 		}
 		MYLOG("APP", "%s", log_buff);
+
+		if (has_rak1921)
+		{
+			sprintf(disp_txt, "RX: RSSI %d", g_last_rssi);
+			rak1921_add_line(disp_txt);
+			sprintf(disp_txt, "%s", log_buff);
+			rak1921_add_line(disp_txt);
+		}
 	}
 
 	// LoRa TX finished handling
@@ -515,6 +559,7 @@ void lora_data_handler(void)
 				sprintf(disp_txt, "P2P TX finished");
 				rak1921_add_line(disp_txt);
 			}
+			Radio.Rx(0);
 		}
 	}
 }

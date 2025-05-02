@@ -10,6 +10,7 @@ build_tag = "RAK_"
 version_tag_1 = defines.get("SW_VERSION_1")
 version_tag_2 = defines.get("SW_VERSION_2")
 version_tag_3 = defines.get("SW_VERSION_3")
+version_tag_4 = defines.get("FREQ_VERSION")
 build_date = datetime.datetime.now().strftime('%Y.%m.%d.%H.%M.%S')
 
-env.Replace(PROGNAME="../../../Generated/WB_HW_Test_V%s.%s.%s" % (version_tag_1,version_tag_2,version_tag_3))
+env.Replace(PROGNAME="../../../Generated/WB_HW_Test_V%s.%s.%s_%s" % (version_tag_1,version_tag_2,version_tag_3,version_tag_4))

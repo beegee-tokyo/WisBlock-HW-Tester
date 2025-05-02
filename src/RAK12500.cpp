@@ -133,7 +133,7 @@ bool poll_gnss(void)
 
 	time_t time_out = millis();
 
-	time_t check_limit = 15000;
+	time_t check_limit = 2000;
 
 	MYLOG("GNSS", "GNSS timeout %ld", (long int)check_limit);
 
