@@ -8,6 +8,7 @@
  * @copyright Copyright (c) 2022
  *
  */
+#ifdef NRF52_SERIES
 #include "main.h"
 
 #include <rak14000.h> //Click here to get the library: http://librarymanager/All#RAK14000
@@ -33,17 +34,17 @@ bool init_rak14000(void)
 {
 	digitalWrite(POWER_ENABLE, HIGH);
 
-	// set left button 
+	// set left button
 	pinMode(LEFT_BUTTON, INPUT_PULLDOWN);
-	MYLOG("EPD","Left %s", digitalRead(LEFT_BUTTON) == HIGH ? "HIGH" : "LOW");
+	MYLOG("EPD", "Left %s", digitalRead(LEFT_BUTTON) == HIGH ? "HIGH" : "LOW");
 
-	// set middle button 
+	// set middle button
 	pinMode(MIDDLE_BUTTON, INPUT_PULLDOWN);
-	MYLOG("EPD","Middle %s", digitalRead(MIDDLE_BUTTON) == HIGH ? "HIGH" : "LOW");
+	MYLOG("EPD", "Middle %s", digitalRead(MIDDLE_BUTTON) == HIGH ? "HIGH" : "LOW");
 
-	// set right button 
+	// set right button
 	pinMode(RIGHT_BUTTON, INPUT_PULLDOWN);
-	MYLOG("EPD","Right %s", digitalRead(RIGHT_BUTTON) == HIGH ? "HIGH" : "LOW");
+	MYLOG("EPD", "Right %s", digitalRead(RIGHT_BUTTON) == HIGH ? "HIGH" : "LOW");
 
 	// Use button GPIO to test if RAK14000 is present
 	if ((digitalRead(LEFT_BUTTON) == LOW) || (digitalRead(MIDDLE_BUTTON) == LOW) || (digitalRead(RIGHT_BUTTON) == LOW))
@@ -141,9 +142,29 @@ void refresh_rak14000(void)
 	}
 	batt_level_f = batt_level_f / 10;
 
-	snprintf(disp_text, 59, "Batt %.2fV", batt_level_f/1000);
+	snprintf(disp_text, 59, "Batt %.2fV", batt_level_f / 1000);
 	rak14000_text(70, 90, disp_text, (uint16_t)txt_color, 2);
 
 	epd.Init(FULL);
 	epd.Display(image);
 }
+#endif
+#ifdef ESP32
+#include "main.h"
+bool init_rak14000(void)
+{
+	return false;
+}
+void rak14000_text(int16_t x, int16_t y, char *text, uint16_t text_color, uint32_t text_size)
+{
+}
+void rak14000_logo(int16_t x, int16_t y)
+{
+}
+void clear_rak14000(void)
+{
+}
+void refresh_rak14000(void)
+{
+}
+#endif

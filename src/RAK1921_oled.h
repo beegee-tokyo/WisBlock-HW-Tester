@@ -12,10 +12,10 @@
 #define RAK1921_H
 #include <Arduino.h>
 
-#ifdef ESP32
-#define PIN_WIRE_SDA SDA
-#define PIN_WIRE_SCL SCL
-#endif
+// #ifdef ESP32
+// #define PIN_WIRE_SDA SDA
+// #define PIN_WIRE_SCL SCL
+// #endif
 
 bool init_rak1921(void);
 void rak1921_add_line(char *line);
