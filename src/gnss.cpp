@@ -10,6 +10,8 @@
  */
 #include "main.h"
 
+String tmp_data = "";
+
 /** Instance for RAK1910 GNSS sensor */
 TinyGPSPlus my_rak12501_gnss;
 /** Instance for RAK12500 GNSS sensor */
@@ -29,8 +31,8 @@ uint8_t gnss_option = 0;
 
 int64_t latitude = 0;
 int64_t longitude = 0;
-int32_t altitude = 0;
-int32_t accuracy = 0;
+uint32_t altitude = 0;
+uint32_t accuracy = 0;
 
 byte fix_type = 0; // Get the fix type
 char fix_type_str[32] = {0};
@@ -126,7 +128,7 @@ bool init_gnss(void)
 		{
 			my_gnss.begin(Serial1);
 			MYLOG("GNSS", "UBLOX found on Serial1 with 9600");
-			my_gnss.setUART1Output(COM_TYPE_UBX); // Set the UART port to output UBX only
+			// my_gnss.setUART1Output(COM_TYPE_NMEA); // Set the UART port to output UBX only
 		}
 		else
 		{
@@ -166,9 +168,9 @@ bool poll_gnss(void)
 
 	sprintf(fix_type_str, "None");
 	// RAK12500
-	if (gnss_option == RAK12500_GNSS)
+	while ((millis() - time_out) < check_limit)
 	{
-		while ((millis() - time_out) < check_limit)
+		if (gnss_option == RAK12500_GNSS)
 		{
 			latitude = my_gnss.getLatitude();
 			longitude = my_gnss.getLongitude();
@@ -203,102 +205,139 @@ bool poll_gnss(void)
 				// Break the while()
 				break;
 			}
-			// if (my_gnss.getGnssFixOk())
-			// {
-			// 	fix_type = my_gnss.getFixType(); // Get the fix type
-			// 	if (fix_type == 1)
-			// 		sprintf(fix_type_str, "Dead reckoning");
-			// 	else if (fix_type == 2)
-			// 		sprintf(fix_type_str, "Fix type 2D");
-			// 	else if (fix_type == 3)
-			// 		sprintf(fix_type_str, "Fix type 3D");
-			// 	else if (fix_type == 4)
-			// 		sprintf(fix_type_str, "GNSS fix");
-			// 	else if (fix_type == 5)
-			// 		sprintf(fix_type_str, "Time fix");
-			// 	else
-			// 	{
-			// 		sprintf(fix_type_str, "No Fix");
-			// 		fix_type = 0;
-			// 	}
-			// 	bool fix_sufficient = false;
-			// 	sat_num = my_gnss.getSIV();
-			// 	accuracy = my_gnss.getHorizontalDOP();
-
-			// 	MYLOG("GNSS", "L Fixtype: %d %s", fix_type, fix_type_str);
-			// 	MYLOG("GNSS", "L Sat: %d ", sat_num);
-			// 	if (fix_type >= 3) /** Fix type 3D */
-			// 	{
-			// 		fix_sufficient = true;
-			// 	}
-
-			// 	if (fix_sufficient) /** Fix type 3D */
-			// 	{
-			// 		last_read_ok = true;
-			// 		latitude = my_gnss.getLatitude();
-			// 		longitude = my_gnss.getLongitude();
-			// 		altitude = my_gnss.getAltitude();
-			// 		accuracy = my_gnss.getHorizontalDOP();
-
-			// 		MYLOG("GNSS", "Fixtype: %d %s", my_gnss.getFixType(), fix_type_str);
-			// 		MYLOG("GNSS", "Lat: %.4f Lon: %.4f", latitude / 10000000.0, longitude / 10000000.0);
-			// 		MYLOG("GNSS", "Alt: %.2f", altitude / 1000.0);
-			// 		MYLOG("GNSS", "HDOP: %.2f ", accuracy / 100.0);
-
-			// 		// Break the while()
-			// 		break;
-			// 	}
-			// }
 			else
 			{
 				delay(1000);
 			}
 		}
-	}
-	else
-	{
-		uint32_t start_time = millis();
-		while ((millis() - start_time) < 20000)
+		else
 		{
-			if (Serial1.available() > 0)
+			bool newData = false;
+			// For one second we parse GPS data and report some key values
+			for (unsigned long start = millis(); millis() - start < 1000;)
 			{
-				// char gnss = Serial1.read();
-				// Serial.print(gnss);
-				// if (my_rak12501_gnss.encode(gnss))
-				if (my_rak12501_gnss.encode(Serial1.read()))
+				while (Serial1.available())
 				{
-					if (my_rak12501_gnss.location.isUpdated() && my_rak12501_gnss.location.isValid())
-					{
-						MYLOG("GNSS", "Location valid");
-						has_pos = true;
-						latitude = (my_rak12501_gnss.location.lat() * 10000000.0);
-						longitude = (my_rak12501_gnss.location.lng() * 10000000.0);
-					}
-					else if (my_rak12501_gnss.altitude.isUpdated() && my_rak12501_gnss.altitude.isValid())
-					{
-						MYLOG("GNSS", "Altitude valid");
-						has_alt = true;
-						altitude = (my_rak12501_gnss.altitude.meters() * 1000);
-					}
-					else if (my_rak12501_gnss.hdop.isUpdated() && my_rak12501_gnss.hdop.isValid())
-					{
-						accuracy = my_rak12501_gnss.hdop.hdop() * 100;
-					}
+					char c = Serial1.read();
+					tmp_data += c;
+					// Serial.write((char)c);
+					if (my_rak12501_gnss.encode(c))
+						newData = true;
 				}
-				if (has_pos && has_alt)
-				{
-					MYLOG("GNSS", "Lat: %.4f Lon: %.4f", latitude / 10000000.0, longitude / 10000000.0);
-					MYLOG("GNSS", "Alt: %.2f", altitude / 1000.0);
-					MYLOG("GNSS", "Acy: %.2f ", accuracy / 100.0);
-					last_read_ok = true;
-					break;
-				}
-				delay(10);
 			}
+			if (newData)
+			{
+				if (my_rak12501_gnss.location.isUpdated() && my_rak12501_gnss.location.isValid())
+				{
+					// if (has_rak1921)
+					// {
+					// 	snprintf(oled_buff, 127, "Valid Location");
+					// 	rak1921_add_line(oled_buff);
+					// }
+					MYLOG("GNSS", "Location valid");
+					has_pos = true;
+					latitude = (uint64_t)(my_rak12501_gnss.location.lat() * 10000000.0);
+					longitude = (uint64_t)(my_rak12501_gnss.location.lng() * 10000000.0);
+				}
+				if (my_rak12501_gnss.altitude.isUpdated() && my_rak12501_gnss.altitude.isValid())
+				{
+					// if (has_rak1921)
+					// {
+					// 	snprintf(oled_buff, 127, "Valid Altitude");
+					// 	rak1921_add_line(oled_buff);
+					// }
+					MYLOG("GNSS", "Altitude valid");
+					has_alt = true;
+					altitude = (my_rak12501_gnss.altitude.meters() * 1000);
+				}
+				if (my_rak12501_gnss.hdop.isUpdated() && my_rak12501_gnss.hdop.isValid())
+				{
+					accuracy = my_rak12501_gnss.hdop.hdop() * 100;
+				}
+				if (my_rak12501_gnss.satellites.isValid())
+				{
+					sat_num = my_rak12501_gnss.satellites.value();
+				}
+			}
+			if (has_pos && has_alt)
+			{
+				MYLOG("GNSS", "Lat: %.4f Lon: %.4f", latitude / 10000000.0, longitude / 10000000.0);
+				MYLOG("GNSS", "Alt: %.2f", altitude / 1000.0);
+				MYLOG("GNSS", "Acy: %.2f ", accuracy / 100.0);
+				last_read_ok = true;
+				break;
+			}
+
+			//************************************************************** */
+			// while (Serial1.available() > 0)
+			// {
+			// 	if ((millis() - time_out) > check_limit)
+			// 	{
+			// 		MYLOG("GNSS", "RAK12501 timeout");
+			// 		break;
+			// 	}
+			// 	// char gnss = Serial1.read();
+			// 	// Serial.print(gnss);
+			// 	// if (my_rak12501_gnss.encode(gnss))
+			// 	if (my_rak12501_gnss.encode(Serial1.read()))
+			// 	{
+			// 		MYLOG("GNSS", "Lat: %.4f Lon: %.4f", (my_rak12501_gnss.location.lat()), (my_rak12501_gnss.location.lng()));
+			// 		MYLOG("GNSS", "Alt: %.2f", my_rak12501_gnss.altitude.meters());
+			// 		MYLOG("GNSS", "Acy: %.2f ", my_rak12501_gnss.hdop.hdop());
+			// 		MYLOG("GNSS", "Sat: %ld ", my_rak12501_gnss.satellites.value());
+			// 		if (my_rak12501_gnss.location.isUpdated() && my_rak12501_gnss.location.isValid())
+			// 		{
+			// 			if (has_rak1921)
+			// 			{
+			// 				snprintf(oled_buff, 127, "Valid Location");
+			// 				rak1921_add_line(oled_buff);
+			// 			}
+			// 			MYLOG("GNSS", "Location valid");
+			// 			has_pos = true;
+			// 			latitude = (uint64_t)(my_rak12501_gnss.location.lat() * 10000000.0);
+			// 			longitude = (uint64_t)(my_rak12501_gnss.location.lng() * 10000000.0);
+			// 		}
+			// 		if (my_rak12501_gnss.altitude.isUpdated() && my_rak12501_gnss.altitude.isValid())
+			// 		{
+			// 			if (has_rak1921)
+			// 			{
+			// 				snprintf(oled_buff, 127, "Valid Altitude");
+			// 				rak1921_add_line(oled_buff);
+			// 			}
+			// 			MYLOG("GNSS", "Altitude valid");
+			// 			has_alt = true;
+			// 			altitude = (my_rak12501_gnss.altitude.meters() * 1000);
+			// 		}
+			// 		if (my_rak12501_gnss.hdop.isUpdated() && my_rak12501_gnss.hdop.isValid())
+			// 		{
+			// 			if (has_rak1921)
+			// 			{
+			// 				snprintf(oled_buff, 127, "Valid HDOP");
+			// 				rak1921_add_line(oled_buff);
+			// 			}
+			// 			accuracy = my_rak12501_gnss.hdop.hdop() * 100;
+			// 		}
+			// 	}
+			// 	if (my_rak12501_gnss.satellites.isValid())
+			// 	{
+			// 		sat_num = my_rak12501_gnss.satellites.value();
+			// 	}
+
+			// 	if (has_pos && has_alt)
+			// 	{
+			// 		MYLOG("GNSS", "Lat: %.4f Lon: %.4f", latitude / 10000000.0, longitude / 10000000.0);
+			// 		MYLOG("GNSS", "Alt: %.2f", altitude / 1000.0);
+			// 		MYLOG("GNSS", "Acy: %.2f ", accuracy / 100.0);
+			// 		last_read_ok = true;
+			// 		break;
+			// 	}
+			// 	delay(10);
+			// }
+			//************************************************************** */
 		}
-		if (has_pos && has_alt)
+		if (last_read_ok)
 		{
-			last_read_ok = true;
+			break;
 		}
 	}
 	if (last_read_ok)
@@ -311,11 +350,9 @@ bool poll_gnss(void)
 
 		if (has_rak1921)
 		{
-			snprintf(oled_buff, 127, "Fix: %s Sat: %d", fix_type_str, sat_num);
+			snprintf(oled_buff, 127, "Alt: %.0f Acry %.2f Sat: %d", altitude / 1000.0, accuracy / 100.0, sat_num);
 			rak1921_add_line(oled_buff);
 			snprintf(oled_buff, 127, "L: %.6f:%.6f", latitude / 10000000.0, longitude / 10000000.0);
-			rak1921_add_line(oled_buff);
-			snprintf(oled_buff, 127, "Alt: %.2f, Acry %.2f", altitude / 1000.0, accuracy / 100.0);
 			rak1921_add_line(oled_buff);
 		}
 		return true;
@@ -324,8 +361,16 @@ bool poll_gnss(void)
 	{
 		if (has_rak1921)
 		{
-			rak1921_add_line((char *)"No location fix");
-			snprintf(oled_buff, 127, "Fix: %s Sat: %d", fix_type_str, sat_num);
+			snprintf(oled_buff, 127, "No location - Sat: %d", sat_num);
+			// rak1921_add_line((char *)"No location fix");
+			// if (gnss_option == RAK12500_GNSS)
+			// {
+			// 	snprintf(oled_buff, 127, "Fix: %s Sat: %d", fix_type_str, sat_num);
+			// }
+			// else
+			// {
+			// 	snprintf(oled_buff, 127, "Sat: %d", sat_num);
+			// }
 			rak1921_add_line(oled_buff);
 		}
 		// No location found

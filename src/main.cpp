@@ -172,7 +172,30 @@ void loop(void)
 		has_rak1921 = init_rak1921();
 		if (has_rak1921)
 		{
-			rak1921_write_header((char *)"WisBlock Node");
+#ifdef _VARIANT_RAK3400_
+#warning RAK3401
+			rak1921_write_header((char *)"WisMesh RAK3401 HW test");
+#define _FOUND_HEADER
+#endif
+#ifdef _VAR_RAK4631_
+#warning RAK4631
+			rak1921_write_header((char *)"WisMesh RAK4631 HW test");
+#define _FOUND_HEADER
+#endif
+#ifdef _VAR_RAK4631_L_
+#warning "RAK4631 L"
+			rak1921_write_header((char *)"WisMesh RAK4631L HW tst");
+#define _FOUND_HEADER
+#endif
+#ifdef _VARIANT_RAK3112_
+#warning RAK3312
+			rak1921_write_header((char *)"WisMesh RAK3312 HW test");
+#define _FOUND_HEADER
+#endif
+#ifndef _FOUND_HEADER
+#warning "No Core found"
+			rak1921_write_header((char *)"WisMesh HW test");
+#endif
 		}
 		else
 		{
@@ -245,7 +268,7 @@ void loop(void)
 
 		// Init GNSS only if not done yet
 		if (gnss_option == NO_GNSS_INIT)
-		{ 
+		{
 			// If it has RAK12500, setup the GNSS module with RAK specific settings
 			if (has_rak12500)
 			{
@@ -293,7 +316,7 @@ void loop(void)
 			MYLOG("FLASH", "Flash Write-Read test #1 success");
 			if (has_rak1921)
 			{
-				sprintf(disp_txt, "Flash Write-Read test #1 success");
+				sprintf(disp_txt, "Flash W-R test #1 OK");
 				rak1921_add_line(disp_txt);
 			}
 		}
@@ -303,7 +326,7 @@ void loop(void)
 			MYLOG("FLASH", "Flash Write-Read test #1 failed");
 			if (has_rak1921)
 			{
-				sprintf(disp_txt, "Flash Write-Read test #1 failed");
+				sprintf(disp_txt, "Flash W-R test #1 NOK");
 				rak1921_add_line(disp_txt);
 			}
 		}
@@ -318,7 +341,7 @@ void loop(void)
 			MYLOG("FLASH", "Flash Write-Read test #2 success");
 			if (has_rak1921)
 			{
-				sprintf(disp_txt, "Flash Write-Read test #2 success");
+				sprintf(disp_txt, "Flash W-R test #2 OK");
 				rak1921_add_line(disp_txt);
 			}
 		}
@@ -328,7 +351,7 @@ void loop(void)
 			MYLOG("FLASH", "Flash Write-Read test #2 failed");
 			if (has_rak1921)
 			{
-				sprintf(disp_txt, "Flash Write-Read test #2 failed");
+				sprintf(disp_txt, "Flash W-R test #2 NOK");
 				rak1921_add_line(disp_txt);
 			}
 		}
@@ -446,8 +469,8 @@ void loop(void)
 		delay(500);
 	}
 
-	delay(10000);
-	digitalWrite(WB_IO2, HIGH);
+	// delay(10000);
+	// digitalWrite(WB_IO2, HIGH);
 
 	// restart_advertising(60);
 	MYLOG("APP", "Timer wakeup");
@@ -460,10 +483,10 @@ void loop(void)
 	// Check GNSS location
 	if (has_rak12500 || has_rak12501)
 	{
-		MYLOG("APP", "Try GNSS");
+		MYLOG("APP", "Try GNSS %s", has_rak12500 ? "RAK12500" : "RAK12501");
 		if (has_rak1921)
 		{
-			sprintf(disp_txt, "Try GNSS");
+			sprintf(disp_txt, "Try GNSS %s", has_rak12500 ? "RAK12500" : "RAK12501");
 			rak1921_add_line(disp_txt);
 		}
 		poll_gnss();
@@ -478,7 +501,7 @@ void loop(void)
 	batt_level_f = batt_level_f / 10;
 	MYLOG("APP", "Battery %.2f V", batt_level_f / 1000);
 
-	digitalWrite(WB_IO2, HIGH);
+	// digitalWrite(WB_IO2, HIGH);
 
 	// Dummy packet
 	uint16_t batt_level = (uint16_t)(batt_level_f);
@@ -510,6 +533,7 @@ void loop(void)
 		loop_counter = 0;
 		lora_hardware_uninit();
 	}
+	delay(10000);
 }
 
 /**@brief Function to be executed on Radio Tx Done event
