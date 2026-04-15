@@ -134,6 +134,7 @@ bool init_gnss(void)
 		}
 		return true;
 	}
+	return false;
 }
 
 /**
@@ -264,7 +265,7 @@ bool poll_gnss(void)
 				// char gnss = Serial1.read();
 				// Serial.print(gnss);
 				// if (my_rak12501_gnss.encode(gnss))
-				// if (my_rak12501_gnss.encode(Serial1.read()))
+				if (my_rak12501_gnss.encode(Serial1.read()))
 				{
 					if (my_rak12501_gnss.location.isUpdated() && my_rak12501_gnss.location.isValid())
 					{
