@@ -59,9 +59,12 @@ void refresh_rak14000(void);
 
 // GNSS functions
 #define NO_GNSS_INIT 0
-#define RAK1910_GNSS 1
+#define RAK12501_GNSS 1
 #define RAK12500_GNSS 2
+#define NO_GNSS_FOUND 3
+
 #include <SparkFun_u-blox_GNSS_Arduino_Library.h>
+#include <TinyGPS++.h>
 bool init_gnss(void);
 bool poll_gnss(void);
 void gnss_task(void *pvParameters);

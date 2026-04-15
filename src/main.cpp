@@ -28,6 +28,8 @@ bool has_rak1921 = false;
 
 /** Flag if RAK12500 was found */
 bool has_rak12500 = false;
+/** Flag if RAK12501 was found */
+bool has_rak12501 = false;
 
 /** Buffer for RAK1921 OLED text */
 char disp_txt[256];
@@ -241,12 +243,20 @@ void loop(void)
 			rak1921_add_line(disp_txt);
 		}
 
-		// If it has RAK12500, setup the GNSS module with RAK specific settings
-		if (has_rak12500)
-		{
-			has_rak12500 = init_gnss();
+		// Init GNSS only if not done yet
+		if (gnss_option == NO_GNSS_INIT)
+		{ 
+			// If it has RAK12500, setup the GNSS module with RAK specific settings
+			if (has_rak12500)
+			{
+				has_rak12500 = init_gnss();
+			}
+			// If it has RAK12501, setup the GNSS module with RAK specific settings
+			else if (gnss_option == NO_GNSS_INIT)
+			{
+				has_rak12501 = init_gnss();
+			}
 		}
-
 		// Initialize flash file system
 		init_flash();
 
@@ -448,7 +458,7 @@ void loop(void)
 	}
 
 	// Check GNSS location
-	if (has_rak12500)
+	if (has_rak12500 || has_rak12501)
 	{
 		MYLOG("APP", "Try GNSS");
 		if (has_rak1921)
