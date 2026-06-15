@@ -8,7 +8,9 @@
  * @copyright Copyright (c) 2022
  *
  */
-#ifdef NRF52_SERIES
+// #ifdef NRF52_SERIES
+#if SUPPORTS_RAK14000
+
 #include "main.h"
 
 #include <rak14000.h> //Click here to get the library: http://librarymanager/All#RAK14000
@@ -148,8 +150,8 @@ void refresh_rak14000(void)
 	epd.Init(FULL);
 	epd.Display(image);
 }
-#endif
-#ifdef ESP32
+
+#else // ESP32 RAk3401
 #include "main.h"
 bool init_rak14000(void)
 {
@@ -167,4 +169,4 @@ void clear_rak14000(void)
 void refresh_rak14000(void)
 {
 }
-#endif
+#endif // #endif SUPPORTS_RAK14000

@@ -2,7 +2,7 @@
 | :-: | :-: | :-: |     
 
 ## UPDATE
-This is version V2 of the tester. The test behaviour has changed, this version does everything in a loop and enables RX as well:    
+This is version V3 of the tester. The test behaviour has changed, this version does test an optional Ethernet module as well:    
 Test HW ==> send 5 packets and listen to incoming packets ==> test HW ==> .....    
 Output over BLE UART is enabled as well.    
 It supports now 4 different hardware configurations:    
@@ -25,13 +25,14 @@ This simple application is testing basic hardware functions of a WisBlock Base d
 
 - BaseBoard LED's 
 - RAK1921 OLED display if connected
-- RAK14000 EPD display if connected
+- RAK14000 EPD display if connected (only RAK4361 Core modules)
 - Check for connected I2C devices
-- Read/Write test on the nRF52840 flash memory
+- Read/Write test on the nRF52840 and ESP32 flash memory
 - Basic LoRa transceiver check
 - LoRa send and receive functionality (requires second device flashed with the tester firmware)
 - Check the analog input for the battery status reading
 - Check RAK12500 or RAk12501 GNSS location module if connected (and if test is done outdoors)
+- Check if RAK13800 Ethernet module is attached (only RAK4361 and RAK3312 Core modules) and can obtain an IP address
 
 The results of the tests are sent over the USB port and if any display is attached, are shown on the display as well.
 

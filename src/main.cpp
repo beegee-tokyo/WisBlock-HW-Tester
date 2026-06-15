@@ -9,16 +9,9 @@
  *
  */
 #include "main.h"
-#include <radio/radio.h>
 
-/** LoRa radio events */
-static RadioEvents_t RadioEvents;
-/** LoRa tx/rx buffer size*/
-static uint16_t BufferSize = BUFFER_SIZE;
-/** LoRa RX buffer */
-static uint8_t RcvBuffer[BUFFER_SIZE];
-/** LoRa TX buffer */
-static uint8_t TxdBuffer[BUFFER_SIZE];
+/** Send Fail counter **/
+uint8_t send_fail = 0;
 
 /** Set the device name, max length is 10 characters */
 char g_ble_dev_name[10] = "RAK-TEST";
@@ -30,6 +23,12 @@ bool has_rak1921 = false;
 bool has_rak12500 = false;
 /** Flag if RAK12501 was found */
 bool has_rak12501 = false;
+
+/** Flag if Ethernet module was found */
+bool has_rak13800 = false;
+
+/** Flag if LORa transceiver init failed */
+bool sx1262_ok = false;
 
 /** Buffer for RAK1921 OLED text */
 char disp_txt[256];
@@ -43,7 +42,6 @@ uint8_t lora_success = 2;
 /** Flag is Flash read/write was successfull */
 bool flash_success = false;
 
-// Timers
 #ifdef NRF52_SERIES
 SoftwareTimer blink_leds_timer;
 #endif
@@ -51,14 +49,8 @@ SoftwareTimer blink_leds_timer;
 Ticker blink_leds_timer;
 #endif
 
-// For battery readings
-float batt_level_f = 0.0;
-
-// For Flash test
-s_lorawan_settings g_lorawan_settings;
-
-/** Bandwidths as char arrays */
-char *bandwidths[] = {(char *)"125", (char *)"250", (char *)"500", (char *)"062", (char *)"041", (char *)"031", (char *)"020", (char *)"015", (char *)"010", (char *)"007"};
+// Run tests on every 5th wakeup
+uint8_t loop_counter = 0;
 
 // LED toggle control
 #ifdef NRF52_SERIES
@@ -77,21 +69,211 @@ void toggle_led(void)
 #endif
 
 /**
+ * @brief Run basic HW tests, except for LoRa transceiver check and LoRa initialization
+ *
+ */
+void run_tests(bool init_eth_now = false)
+{
+	MYLOG("APP", "=========================================");
+#ifdef HIGH_FREQ
+#ifdef _VARIANT_RAK3400_
+#warning "1W version"
+	MYLOG("APP", "Test for 1W transceiver 8xx/9xx Mhz");
+#else
+	MYLOG("APP", "Test for 8xx/9xx Mhz");
+#endif
+#else
+	MYLOG("APP", "Test for 4xx Mhz");
+#endif
+	MYLOG("APP", "=========================================");
+	MYLOG("APP", "Start tests");
+	// restart_advertising(30);
+
+	pinMode(LED_BLUE, OUTPUT);
+	pinMode(LED_GREEN, OUTPUT);
+
+	digitalWrite(LED_BLUE, HIGH);
+	digitalWrite(LED_GREEN, LOW);
+
+	// Test OLED
+	has_rak1921 = init_rak1921();
+	if (has_rak1921)
+	{
+#ifdef HIGH_FREQ
+	#ifdef _VARIANT_RAK3400_
+			// #warning "1W version"
+			rak1921_write_header((char *)"RAK3401 1W Test");
+	#elif defined _VARIANT_RAK3112_
+			rak1921_write_header((char *)"RAK3312 8xx/9xx");
+	#else
+			rak1921_write_header((char *)"RAK4631 8xx/9xx");
+	#endif
+#else
+#ifdef _VARIANT_RAK3400_
+		// #warning "1W version"
+		rak1921_write_header((char *)"RAK3401 4xx 1W Test");
+#else
+		rak1921_write_header((char *)"RAK4631 4xx");
+#endif
+#endif // HIGH_FREQ
+	}
+	else
+	{
+		MYLOG("OLED", "No OLED found");
+	}
+
+	if (init_eth_now)
+	{
+		// Check Ethernet module
+		has_rak13800 = init_eth();
+	}
+
+	// Initialize EPD
+	has_rak14000 = init_rak14000();
+	if (has_rak1921)
+	{
+		if (has_rak14000)
+		{
+			sprintf(disp_txt, "Found RAK14000 EPD");
+			rak1921_add_line(disp_txt);
+		}
+		else
+		{
+			sprintf(disp_txt, "No RAK14000 EPD");
+			rak1921_add_line(disp_txt);
+		}
+	}
+
+	if (has_rak14000)
+	{
+		MYLOG("EPD", "Found RAK14000 EPD");
+	}
+	else
+	{
+		MYLOG("EPD", "No RAK14000 EPD");
+	}
+
+	if (has_rak13800)
+	{
+		check_ip();
+	}
+
+	// Scan the I2C interfaces for devices
+	byte error;
+	uint8_t num_dev = 0;
+
+	Wire.begin();
+	// Some modules support only 100kHz
+	Wire.setClock(100000);
+	for (byte address = 1; address < 127; address++)
+	{
+		Wire.beginTransmission(address);
+		error = Wire.endTransmission();
+		if (error == 0)
+		{
+			MYLOG("SCAN", "Found sensor at I2C1 0x%02X", address);
+			if (address == 0x3c)
+			{
+				has_rak1921 = true;
+			}
+			if (has_rak1921)
+			{
+				sprintf(disp_txt, "Found I2C device 0x%02X", address);
+				rak1921_add_line(disp_txt);
+			}
+			if (address == 0x42)
+			{
+				has_rak12500 = true;
+			}
+			num_dev++;
+		}
+	}
+	MYLOG("SCAN", "Found %d I2C devices", num_dev);
+	if (has_rak1921)
+	{
+		sprintf(disp_txt, "Found %d I2C devices", num_dev);
+		rak1921_add_line(disp_txt);
+	}
+
+	// If it has RAK12500, setup the GNSS module with RAK specific settings
+	if (has_rak12500)
+	{
+		has_rak12500 = init_gnss();
+	}
+
+	// Read battery values
+	float batt_level_f = 0.0;
+	for (int readings = 0; readings < 10; readings++)
+	{
+		batt_level_f += read_batt();
+	}
+	batt_level_f = batt_level_f / 10;
+	MYLOG("APP", "Battery %.2f V", batt_level_f / 1000);
+
+	if (has_rak14000)
+	{
+		refresh_rak14000();
+	}
+}
+
+/**
  * @brief Initial setup of the application (before LoRaWAN and BLE setup)
  *
  */
-void setup(void)
+void setup_app(void)
 {
-	pinMode(LED_GREEN, OUTPUT);
-	digitalWrite(LED_GREEN, LOW);
-	pinMode(LED_BLUE, OUTPUT);
-	digitalWrite(LED_BLUE, LOW);
-	MYLOG("APP", "Initialize application");
+	// Set firmware version
+	api_set_version(SW_VERSION_1, SW_VERSION_2, SW_VERSION_3);
+
+	g_lora_p2p_rx_mode = RX_MODE_RX;
+
+	// MYLOG("APP", "Setup application");
+	g_enable_ble = true;
+
 	pinMode(WB_IO2, OUTPUT);
 	digitalWrite(WB_IO2, HIGH);
+}
+
+/**
+ * @brief Final setup of application  (after LoRaWAN and BLE setup)
+ *
+ * @return true
+ * @return false
+ */
+bool init_app(void)
+{
+	// Check if settings is for LoRa P2P
+	if (g_lorawan_settings.lorawan_enable != false)
+	{
+		MYLOG("APP", "Detected LoRaWAN, switch to LoRa P2P");
+		// Change LoRaWAN settings
+		g_lorawan_settings.lorawan_enable = false;	 // Force LoRa P2P
+		g_lorawan_settings.send_repeat_time = 10000; // Force 30 seconds send interval
+		g_lorawan_settings.auto_join = true;		 // Disable automatic join ==> enable BLE advertising
+#ifdef HIGH_FREQ
+#warning "H version"
+		g_lorawan_settings.p2p_frequency = 910000000;
+#else
+#warning "L version"
+		g_lorawan_settings.p2p_frequency = 433100000;
+#endif
+		g_lorawan_settings.p2p_tx_power = 22;
+		g_lorawan_settings.p2p_bandwidth = 0;
+		g_lorawan_settings.p2p_sf = 7;
+		g_lorawan_settings.p2p_cr = 1;
+		g_lorawan_settings.p2p_preamble_len = 8;
+		g_lorawan_settings.p2p_symbol_timeout = 0;
+
+		// Save LoRaWAN settings
+		api_set_credentials();
+
+		// Reset device and restart in P2P mode
+		api_reset();
+	}
+
+	g_lora_p2p_rx_mode = RX_MODE_RX;
 
 	Serial.begin(115200);
-
 	time_t serial_timeout = millis();
 	// On nRF52840 the USB serial is not available immediately
 	while (!Serial)
@@ -108,44 +290,7 @@ void setup(void)
 	}
 	digitalWrite(LED_GREEN, LOW);
 
-	// Initialize BLE
-	init_ble();
-
-	// Wait some time for a BLE connection
-	while (!g_ble_uart_is_connected)
-	{
-		if ((millis() - serial_timeout) < 5000)
-		{
-			delay(100);
-			digitalWrite(LED_GREEN, !digitalRead(LED_GREEN));
-		}
-		else
-		{
-			break;
-		}
-	}
-
-	// Initialize battery functions
-	init_batt();
-	Serial.println("=====================================");
-#ifdef NRF52_SERIES
-	Serial.println("WisMesh RAK4631/RAK3401 HW test");
-#endif
-#ifdef ESP32
-	Serial.println("WisMesh RAK3312 HW test");
-#endif
-	Serial.println("=====================================");
-
-#ifdef HIGH_FREQ
-#ifdef _VARIANT_RAK3400_
-#warning "1W version"
-	Serial.println("Test for 1W transceiver 8xx/9xx Mhz");
-#else
-	Serial.println("Test for 8xx/9xx Mhz");
-#endif
-#else
-	Serial.println("Test for 4xx Mhz");
-#endif
+	run_tests(true);
 
 	// Start timer for LED blinking
 #ifdef NRF52_SERIES
@@ -155,302 +300,210 @@ void setup(void)
 #ifdef ESP32
 	blink_leds_timer.attach_ms(250, toggle_led);
 #endif
-	return;
+
+	// Erase flash file system
+	flash_reset();
+
+	// Change LoRaWAN settings
+	g_lorawan_settings.lorawan_enable = false;	 // Force LoRa P2P
+	g_lorawan_settings.send_repeat_time = 10000; // Force 30 seconds send interval
+	g_lorawan_settings.auto_join = true;		 // Disable automatic join ==> enable BLE advertising
+#ifdef HIGH_FREQ
+#warning "H version"
+	g_lorawan_settings.p2p_frequency = 910000000;
+#else
+#warning "L version"
+	g_lorawan_settings.p2p_frequency = 433100000;
+#endif
+	g_lorawan_settings.p2p_tx_power = 22;
+	g_lorawan_settings.p2p_bandwidth = 0;
+	g_lorawan_settings.p2p_sf = 7;
+	g_lorawan_settings.p2p_cr = 1;
+	g_lorawan_settings.p2p_preamble_len = 8;
+	g_lorawan_settings.p2p_symbol_timeout = 0;
+
+	g_lora_p2p_rx_mode = RX_MODE_RX;
+
+	// Save LoRaWAN settings (in case they were still there on top of Meshtastic settings)
+	api_set_credentials();
+
+	// Write-Read Flash test
+	MYLOG("FLASH", "Flash Write-Read test #1");
+
+	if (save_settings())
+	{
+		flash_success = true;
+		MYLOG("FLASH", "Flash Write-Read test #1 success");
+		if (has_rak1921)
+		{
+			sprintf(disp_txt, "Flash Write-Read test #1 success");
+			rak1921_add_line(disp_txt);
+		}
+	}
+	else
+	{
+		flash_success = false;
+		MYLOG("FLASH", "Flash Write-Read test #1 failed");
+		if (has_rak1921)
+		{
+			sprintf(disp_txt, "Flash Write-Read test #1 failed");
+			rak1921_add_line(disp_txt);
+		}
+	}
+	MYLOG("FLASH", "Read send time from flash %ld", g_lorawan_settings.send_repeat_time);
+
+	MYLOG("FLASH", "Flash Write-Read test #2");
+	g_lorawan_settings.send_repeat_time = 10000;
+
+	if (save_settings())
+	{
+		flash_success = true;
+		MYLOG("FLASH", "Flash Write-Read test #2 success");
+		if (has_rak1921)
+		{
+			sprintf(disp_txt, "Flash Write-Read test #2 success");
+			rak1921_add_line(disp_txt);
+		}
+	}
+	else
+	{
+		flash_success = false;
+		MYLOG("FLASH", "Flash Write-Read test #2 failed");
+		if (has_rak1921)
+		{
+			sprintf(disp_txt, "Flash Write-Read test #2 failed");
+			rak1921_add_line(disp_txt);
+		}
+	}
+
+	// Check connection to SX126x
+	// After power on the sync word should be 2414. 4434 could be possible on a restart (private network syncword)
+	// If we got something else, something is wrong.
+	uint16_t readSyncWord = 0;
+
+	SX126xReadRegisters(REG_LR_SYNCWORD, (uint8_t *)&readSyncWord, 2);
+
+	MYLOG("SX1262", "SyncWord = %04X", readSyncWord);
+	if (has_rak1921)
+	{
+		sprintf(disp_txt, "SyncWord = %04X", readSyncWord);
+		rak1921_add_line(disp_txt);
+	}
+
+	if ((readSyncWord == 0x2414) || (readSyncWord == 0x4434))
+	{
+		MYLOG("SX1262", "LoRa transceiver ok");
+		sx1262_ok = true;
+		if (has_rak1921)
+		{
+			sprintf(disp_txt, "LoRa transceiver ok");
+			rak1921_add_line(disp_txt);
+		}
+	}
+	else
+	{
+		MYLOG("SX1262", "SyncWord is incorrect, potential problem in SPI setup or LoRa transceiver");
+		sx1262_ok = false;
+		if (has_rak1921)
+		{
+			sprintf(disp_txt, "SX1262 problem (SPI or LoRa chip");
+			rak1921_add_line(disp_txt);
+		}
+		// Write syncword
+		Radio.SetCustomSyncWord(0x2414);
+		// Readback syncword
+		SX126xReadRegisters(REG_LR_SYNCWORD, (uint8_t *)&readSyncWord, 2);
+
+		MYLOG("SX1262", "SyncWord after reset = %04X", readSyncWord);
+	}
+
+	// Init LoRa
+	init_lora();
+
+	g_lora_p2p_rx_mode = RX_MODE_RX;
+
+	Serial.flush();
+	delay(500);
+
+	return true;
 }
 
-uint8_t loop_counter = 0;
-
 /**
- * @brief Loop, runs RX/TX tests, reads battery, tries to get location
- *
+ * @brief Handle events
+ * 		Events can be
+ * 		- timer (setup with AT+SENDINT=xxx)
+ * 		- interrupt events
+ * 		- wake-up signals from other tasks
  */
-void loop(void)
+void app_event_handler(void)
 {
-	if (loop_counter == 0)
+#ifdef NRF52_SERIES
+	blink_leds_timer.start();
+#endif
+
+	// Timer triggered event
+	if ((g_task_event_type & STATUS) == STATUS)
 	{
-		// Test OLED
-		has_rak1921 = init_rak1921();
-		if (has_rak1921)
+		g_task_event_type &= N_STATUS;
+
+		digitalWrite(WB_IO2, HIGH);
+
+		loop_counter++;
+		if (loop_counter == 10)
 		{
-#ifdef _VARIANT_RAK3400_
-#warning RAK3401
-			rak1921_write_header((char *)"WisMesh RAK3401 HW test");
-#define _FOUND_HEADER
-#endif
-#ifdef _VAR_RAK4631_
-#warning RAK4631
-			rak1921_write_header((char *)"WisMesh RAK4631 HW test");
-#define _FOUND_HEADER
-#endif
-#ifdef _VAR_RAK4631_L_
-#warning "RAK4631 L"
-			rak1921_write_header((char *)"WisMesh RAK4631L HW tst");
-#define _FOUND_HEADER
-#endif
-#ifdef _VARIANT_RAK3112_
-#warning RAK3312
-			rak1921_write_header((char *)"WisMesh RAK3312 HW test");
-#define _FOUND_HEADER
-#endif
-#ifndef _FOUND_HEADER
-#warning "No Core found"
-			rak1921_write_header((char *)"WisMesh HW test");
-#endif
-		}
-		else
-		{
-			MYLOG("OLED", "No OLED found");
+			loop_counter = 0;
+			MYLOG("APP", "De-init LoRa");
 		}
 
-		// Initialize EPD
-		has_rak14000 = init_rak14000();
-		if (has_rak1921)
+		if (loop_counter == 0)
 		{
-			if (has_rak14000)
+			if (sx1262_ok)
 			{
-				sprintf(disp_txt, "Found RAK14000 EPD");
-				rak1921_add_line(disp_txt);
+				MYLOG("SX1262", "LoRa transceiver ok");
+				if (has_rak1921)
+				{
+					sprintf(disp_txt, "LoRa transceiver ok");
+					rak1921_add_line(disp_txt);
+				}
 			}
 			else
 			{
-				sprintf(disp_txt, "No RAK14000 EPD");
-				rak1921_add_line(disp_txt);
-			}
-		}
-
-		if (has_rak14000)
-		{
-			MYLOG("EPD", "Found RAK14000 EPD");
-		}
-		else
-		{
-			MYLOG("EPD", "No RAK14000 EPD");
-		}
-
-		// Scan the I2C interfaces for devices
-		byte error;
-		uint8_t num_dev = 0;
-
-		MYLOG("SCAN", "Start I2C scan");
-
-		Wire.begin();
-		// Some modules support only 100kHz
-		Wire.setClock(100000);
-		for (byte address = 1; address < 127; address++)
-		{
-			Wire.beginTransmission(address);
-			error = Wire.endTransmission();
-			if (error == 0)
-			{
-				MYLOG("SCAN", "Found sensor at I2C1 0x%02X", address);
-				if (address == 0x3c)
-				{
-					has_rak1921 = true;
-				}
+				MYLOG("SX1262", "SyncWord is incorrect, potential problem in SPI setup or LoRa transceiver");
 				if (has_rak1921)
 				{
-					sprintf(disp_txt, "Found I2C device 0x%02X", address);
+					sprintf(disp_txt, "SX1262 problem (SPI or LoRa chip");
 					rak1921_add_line(disp_txt);
 				}
-				if (address == 0x42)
-				{
-					has_rak12500 = true;
-				}
-				num_dev++;
 			}
+
+			run_tests();
 		}
-		MYLOG("SCAN", "Found %d I2C devices", num_dev);
+
+		// restart_advertising(60);
+		MYLOG("APP", "Timer wakeup");
 		if (has_rak1921)
 		{
-			sprintf(disp_txt, "Found %d I2C devices", num_dev);
+			sprintf(disp_txt, "Timer wakeup");
 			rak1921_add_line(disp_txt);
 		}
 
-		// Init GNSS only if not done yet
-		if (gnss_option == NO_GNSS_INIT)
+		// Check GNSS location
+		if (has_rak12500)
 		{
-			// If it has RAK12500, setup the GNSS module with RAK specific settings
-			if (has_rak12500)
-			{
-				has_rak12500 = init_gnss();
-			}
-			// If it has RAK12501, setup the GNSS module with RAK specific settings
-			else if (gnss_option == NO_GNSS_INIT)
-			{
-				has_rak12501 = init_gnss();
-			}
-		}
-		// Initialize flash file system
-		init_flash();
-
-		// Erase flash file system
-		flash_reset();
-
-		// Change LoRaWAN settings
-		g_lorawan_settings.lorawan_enable = false;	 // Force LoRa P2P
-		g_lorawan_settings.send_repeat_time = 10000; // Force 30 seconds send interval
-		g_lorawan_settings.auto_join = false;		 // Disable automatic join ==> enable BLE advertising
-#ifdef HIGH_FREQ
-#warning "H version"
-		g_lorawan_settings.p2p_frequency = 910000000;
-#else
-#warning "L version"
-		g_lorawan_settings.p2p_frequency = 433100000;
-#endif
-		g_lorawan_settings.p2p_tx_power = 22;
-		g_lorawan_settings.p2p_bandwidth = 0;
-		g_lorawan_settings.p2p_sf = 7;
-		g_lorawan_settings.p2p_cr = 1;
-		g_lorawan_settings.p2p_preamble_len = 8;
-		g_lorawan_settings.p2p_symbol_timeout = 0;
-
-		// Save LoRaWAN settings (in case they were still there on top of Meshtastic settings)
-		save_settings();
-
-		// Write-Read Flash test
-		MYLOG("FLASH", "Flash Write-Read test #1");
-
-		if (save_settings())
-		{
-			flash_success = true;
-			MYLOG("FLASH", "Flash Write-Read test #1 success");
+			MYLOG("APP", "Try GNSS");
 			if (has_rak1921)
 			{
-				sprintf(disp_txt, "Flash W-R test #1 OK");
+				sprintf(disp_txt, "Try GNSS");
 				rak1921_add_line(disp_txt);
 			}
-		}
-		else
-		{
-			flash_success = false;
-			MYLOG("FLASH", "Flash Write-Read test #1 failed");
-			if (has_rak1921)
-			{
-				sprintf(disp_txt, "Flash W-R test #1 NOK");
-				rak1921_add_line(disp_txt);
-			}
-		}
-		MYLOG("FLASH", "Read send time from flash %ld", g_lorawan_settings.send_repeat_time);
-
-		MYLOG("FLASH", "Flash Write-Read test #2");
-		g_lorawan_settings.send_repeat_time = 10000;
-
-		if (save_settings())
-		{
-			flash_success = true;
-			MYLOG("FLASH", "Flash Write-Read test #2 success");
-			if (has_rak1921)
-			{
-				sprintf(disp_txt, "Flash W-R test #2 OK");
-				rak1921_add_line(disp_txt);
-			}
-		}
-		else
-		{
-			flash_success = false;
-			MYLOG("FLASH", "Flash Write-Read test #2 failed");
-			if (has_rak1921)
-			{
-				sprintf(disp_txt, "Flash W-R test #2 NOK");
-				rak1921_add_line(disp_txt);
-			}
+			poll_gnss();
 		}
 
-		// Setup connection to LoRa transceiver
-		uint32_t init_result = -1;
+		// Restart BLE advertising
+		// restart_advertising(30);
 
-#ifdef NRF52_SERIES
-#ifdef HIGH_FREQ
-#ifdef _VARIANT_RAK3400_
-		init_result = lora_rak3400_init();
-#else
-		init_result = lora_rak4630_init();
-#endif
-#else
-		init_result = lora_rak4630_init();
-#endif
-#endif
-#ifdef ESP32
-		init_result = lora_rak3112_init();
-#endif
-		if (init_result != 0)
-		{
-			MYLOG("SX1262", "Initiation of LoRa Transceiver failed, potential problem in SPI setup or LoRa transceiver");
-		}
-
-		// Initialize the Radio callbacks
-		RadioEvents.TxDone = OnTxDone;
-		RadioEvents.RxDone = OnRxDone;
-		RadioEvents.TxTimeout = OnTxTimeout;
-		RadioEvents.RxTimeout = OnRxTimeout;
-		RadioEvents.RxError = OnRxError;
-		RadioEvents.CadDone = OnCadDone;
-
-		// Initialize the Radio
-		Radio.Init(&RadioEvents);
-
-		// Set Radio channel
-		Radio.SetChannel(RF_FREQUENCY);
-
-		// Set Radio TX configuration
-		Radio.SetTxConfig(MODEM_LORA, TX_OUTPUT_POWER, 0, LORA_BANDWIDTH,
-						  LORA_SPREADING_FACTOR, LORA_CODINGRATE,
-						  LORA_PREAMBLE_LENGTH, LORA_FIX_LENGTH_PAYLOAD,
-						  true, 0, 0, LORA_IQ_INVERSION, TX_TIMEOUT_VALUE);
-
-		// Set Radio RX configuration
-		Radio.SetRxConfig(MODEM_LORA, LORA_BANDWIDTH, LORA_SPREADING_FACTOR,
-						  LORA_CODINGRATE, 0, LORA_PREAMBLE_LENGTH,
-						  LORA_SYMBOL_TIMEOUT, LORA_FIX_LENGTH_PAYLOAD,
-						  0, true, 0, 0, LORA_IQ_INVERSION, true);
-
-		// Start LoRa
-		Serial.println("Starting Radio.Rx");
-		Radio.Rx(0);
-
-		// Check connection to SX126x
-		// After power on the sync word should be 2414. 4434 could be possible on a restart (private network syncword)
-		// If we got something else, something is wrong.
-		uint16_t readSyncWord = 0;
-
-		SX126xReadRegisters(REG_LR_SYNCWORD, (uint8_t *)&readSyncWord, 2);
-
-		MYLOG("SX1262", "SyncWord = %04X", readSyncWord);
-		if (has_rak1921)
-		{
-			sprintf(disp_txt, "SyncWord = %04X", readSyncWord);
-			rak1921_add_line(disp_txt);
-		}
-
-		if ((readSyncWord == 0x2414) || (readSyncWord == 0x4434))
-		{
-			MYLOG("SX1262", "LoRa transceiver ok");
-			if (has_rak1921)
-			{
-				sprintf(disp_txt, "LoRa transceiver ok");
-				rak1921_add_line(disp_txt);
-			}
-		}
-		else
-		{
-			MYLOG("SX1262", "SyncWord is incorrect, potential problem in SPI setup or LoRa transceiver");
-			if (has_rak1921)
-			{
-				sprintf(disp_txt, "SX1262 problem (SPI or LoRa chip");
-				rak1921_add_line(disp_txt);
-			}
-			// Write syncword
-			Radio.SetCustomSyncWord(0x2414);
-			// Readback syncword
-			SX126xReadRegisters(REG_LR_SYNCWORD, (uint8_t *)&readSyncWord, 2);
-
-			MYLOG("SX1262", "SyncWord after reset = %04X", readSyncWord);
-		}
-
-		// Start listening
-		Radio.Rx(0);
-
-		// Read battery values
+		// Get Battery status
+		float batt_level_f = 0.0;
 		for (int readings = 0; readings < 10; readings++)
 		{
 			batt_level_f += read_batt();
@@ -458,176 +511,168 @@ void loop(void)
 		batt_level_f = batt_level_f / 10;
 		MYLOG("APP", "Battery %.2f V", batt_level_f / 1000);
 
-		if (has_rak14000)
-		{
-			refresh_rak14000();
-		}
+		digitalWrite(WB_IO2, HIGH);
 
-		// restart_advertising(60);
+		// Dummy packet
+		uint8_t dummy_packet[] = {0x01, 0x74, 0x00, 0x55};
+		uint16_t batt_level = (uint16_t)(batt_level_f);
+		dummy_packet[2] = (uint8_t)(batt_level >> 8);
+		dummy_packet[3] = (uint8_t)(batt_level);
 
-		Serial.flush();
-		delay(500);
-	}
-
-	// delay(10000);
-	// digitalWrite(WB_IO2, HIGH);
-
-	// restart_advertising(60);
-	MYLOG("APP", "Timer wakeup");
-	if (has_rak1921)
-	{
-		sprintf(disp_txt, "Timer wakeup");
-		rak1921_add_line(disp_txt);
-	}
-
-	// Check GNSS location
-	if (has_rak12500 || has_rak12501)
-	{
-		MYLOG("APP", "Try GNSS %s", has_rak12500 ? "RAK12500" : "RAK12501");
+		MYLOG("APP", "Send P2P packet");
 		if (has_rak1921)
 		{
-			sprintf(disp_txt, "Try GNSS %s", has_rak12500 ? "RAK12500" : "RAK12501");
+			sprintf(disp_txt, "Send P2P packet");
 			rak1921_add_line(disp_txt);
 		}
-		poll_gnss();
+		// Radio.Send(dummy_packet, 4);
+		/// \todo Not sure why default function does not work
+		if (send_p2p_packet(dummy_packet, 4))
+		{
+			lora_success = 0;
+			MYLOG("APP", "Send P2P initiated");
+		}
+		else
+		{
+			lora_success = 1;
+			MYLOG("APP", "Send P2P error");
+		}
+		g_lora_p2p_rx_mode = RX_MODE_RX;
 	}
-
-	// Get Battery status
-	float batt_level_f = 0.0;
-	for (int readings = 0; readings < 10; readings++)
-	{
-		batt_level_f += read_batt();
-	}
-	batt_level_f = batt_level_f / 10;
-	MYLOG("APP", "Battery %.2f V", batt_level_f / 1000);
-
-	// digitalWrite(WB_IO2, HIGH);
-
-	// Dummy packet
-	uint16_t batt_level = (uint16_t)(batt_level_f);
-	TxdBuffer[0] = 0x01;
-	TxdBuffer[0] = 0x74;
-	TxdBuffer[2] = (uint8_t)(batt_level >> 8);
-	TxdBuffer[3] = (uint8_t)(batt_level);
-
-	MYLOG("APP", "Send P2P packet");
-	MYLOG("APP", "F:%ld MHz TXP: %d dbm BW: %s", g_lorawan_settings.p2p_frequency / 1000000, g_lorawan_settings.p2p_tx_power, bandwidths[g_lorawan_settings.p2p_bandwidth]);
-	MYLOG("APP", "SF:%d CR: %d/5 PPL: %d", g_lorawan_settings.p2p_sf, g_lorawan_settings.p2p_cr + 3, g_lorawan_settings.p2p_preamble_len);
-
-	if (has_rak1921)
-	{
-		sprintf(disp_txt, "Send P2P packet");
-		rak1921_add_line(disp_txt);
-	}
-	Radio.Send(TxdBuffer, 4);
 
 	if (has_rak14000)
 	{
 		refresh_rak14000();
 		delay(3000);
 	}
+}
 
-	loop_counter++;
-	if (loop_counter == 5)
+#ifdef NRF52_SERIES
+/**
+ * @brief Handle BLE events
+ *
+ */
+void ble_data_handler(void)
+{
+	if (g_enable_ble)
 	{
-		loop_counter = 0;
-		lora_hardware_uninit();
+		/**************************************************************/
+		/**************************************************************/
+		/// \todo BLE UART data arrived
+		/// \todo or forward them to the AT command interpreter
+		/// \todo parse them here
+		/**************************************************************/
+		/**************************************************************/
+		if ((g_task_event_type & BLE_DATA) == BLE_DATA)
+		{
+			MYLOG("AT", "RECEIVED BLE");
+			// BLE UART data arrived
+			// in this example we forward it to the AT command interpreter
+			g_task_event_type &= N_BLE_DATA;
+
+			while (g_ble_uart.available() > 0)
+			{
+				at_serial_input(uint8_t(g_ble_uart.read()));
+				delay(5);
+			}
+			at_serial_input(uint8_t('\n'));
+		}
 	}
-	delay(10000);
 }
+#endif
 
-/**@brief Function to be executed on Radio Tx Done event
+/**
+ * @brief Handle LoRa events
+ *
  */
-void OnTxDone(void)
+void lora_data_handler(void)
 {
-	Serial.println("OnTxDone");
-
-	// Back to RX
-	Radio.Rx(0);
-}
-
-/**@brief Function to be executed on Radio Rx Done event
- */
-void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr)
-{
-	Serial.println("OnRxDone");
-
-	delay(10);
-	BufferSize = size;
-	memcpy(RcvBuffer, payload, BufferSize);
-
-	Serial.printf("RssiValue=%d dBm, SnrValue=%d\n", rssi, snr);
-
-	for (int idx = 0; idx < size; idx++)
+	// LoRa Join finished handling
+	if ((g_task_event_type & LORA_JOIN_FIN) == LORA_JOIN_FIN)
 	{
-		Serial.printf("%02X ", RcvBuffer[idx]);
+		g_task_event_type &= N_LORA_JOIN_FIN;
+		if (g_join_result)
+		{
+			MYLOG("APP", "Successfully joined network");
+		}
+		else
+		{
+			MYLOG("APP", "Join network failed");
+			/// \todo here join could be restarted.
+			// lmh_join();
+		}
 	}
-	Serial.println("");
 
-	digitalWrite(LED_GREEN, LOW);
-
-	// Back to RX
-	Radio.Rx(0);
-}
-
-/**@brief Function to be executed on Radio Tx Timeout event
- */
-void OnTxTimeout(void)
-{
-	// Radio.Sleep();
-	Serial.println("OnTxTimeout");
-
-	digitalWrite(LED_GREEN, LOW);
-
-	// Back to RX
-	Radio.Rx(0);
-}
-
-/**@brief Function to be executed on Radio Rx Timeout event
- */
-void OnRxTimeout(void)
-{
-	Serial.println("OnRxTimeout");
-
-	digitalWrite(LED_GREEN, LOW);
-
-	// Back to RX
-	Radio.Rx(0);
-}
-
-/**@brief Function to be executed on Radio Rx Error event
- */
-void OnRxError(void)
-{
-	Serial.println("OnRxError");
-
-	digitalWrite(LED_GREEN, LOW);
-
-	// Back to RX
-	Radio.Rx(0);
-}
-
-/**@brief Function to be executed on CAD Done event
- */
-void OnCadDone(bool cadResult)
-{
-	if (cadResult)
+	// LoRa data handling
+	if ((g_task_event_type & LORA_DATA) == LORA_DATA)
 	{
-		Serial.printf("CAD returned channel busy\n");
+		/**************************************************************/
+		/**************************************************************/
+		/// \todo LoRa data arrived
+		/// \todo parse them here
+		/**************************************************************/
+		/**************************************************************/
+		g_task_event_type &= N_LORA_DATA;
+		MYLOG("APP", "Received package over LoRa");
+		MYLOG("APP", "Last RSSI %d", g_last_rssi);
 
-		// Back to RX
+		char log_buff[g_rx_data_len * 3] = {0};
+		uint8_t log_idx = 0;
+		for (int idx = 0; idx < g_rx_data_len; idx++)
+		{
+			sprintf(&log_buff[log_idx], "%02X ", g_rx_lora_data[idx]);
+			log_idx += 3;
+		}
+		MYLOG("APP", "%s", log_buff);
+
+		if (has_rak1921)
+		{
+			sprintf(disp_txt, "RX: RSSI %d", g_last_rssi);
+			rak1921_add_line(disp_txt);
+			sprintf(disp_txt, "%s", log_buff);
+			rak1921_add_line(disp_txt);
+		}
 		Radio.Rx(0);
+		g_lora_p2p_rx_mode = RX_MODE_RX;
 	}
-	else
+
+	// LoRa TX finished handling
+	if ((g_task_event_type & LORA_TX_FIN) == LORA_TX_FIN)
 	{
-		Serial.printf("CAD returned channel free\n");
+		g_task_event_type &= N_LORA_TX_FIN;
 
-		uint16_t batt_level = (uint16_t)(batt_level_f);
-		TxdBuffer[0] = 0x01;
-		TxdBuffer[0] = 0x74;
-		TxdBuffer[2] = (uint8_t)(batt_level >> 8);
-		TxdBuffer[3] = (uint8_t)(batt_level);
+		if (g_lorawan_settings.lorawan_enable)
+		{
+			if (g_lorawan_settings.confirmed_msg_enabled == LMH_UNCONFIRMED_MSG)
+			{
+				MYLOG("APP", "LPWAN TX cycle finished");
+			}
+			else
+			{
+				MYLOG("APP", "LPWAN TX cycle %s", g_rx_fin_result ? "finished ACK" : "failed NAK");
+			}
+			if (!g_rx_fin_result)
+			{
+				// Increase fail send counter
+				send_fail++;
 
-		Radio.Send(TxdBuffer, 4);
+				if (send_fail == 10)
+				{
+					// Too many failed sendings, reset node and try to rejoin
+					delay(100);
+					api_reset();
+				}
+			}
+		}
+		else
+		{
+			MYLOG("APP", "P2P TX finished");
+			if (has_rak1921)
+			{
+				sprintf(disp_txt, "P2P TX finished");
+				rak1921_add_line(disp_txt);
+			}
+			Radio.Rx(0);
+		}
 	}
 }
